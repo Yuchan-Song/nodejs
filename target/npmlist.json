@@ -1,0 +1,1 @@
+{"version":"1.0.0","name":"npm-exercise","dependencies":{"async":{"version":"3.2.4"},"cookie-parser":{"version":"1.4.6"},"dotenv":{"version":"16.0.3"},"ejs":{"version":"3.1.9"},"express-session":{"version":"1.17.3"},"express":{"version":"4.18.2"},"figlet":{"version":"1.6.0"},"jade":{"version":"0.29.0"},"morgan":{"version":"1.10.0"}}}
