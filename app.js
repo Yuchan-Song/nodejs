@@ -4,13 +4,49 @@ const cookieParser = require('cookie-parser');
 const session = require('express-session');
 const dotenv = require('dotenv');
 const path = require('path');
+const logger = require('./custom_modules/logger');
+const helmet = require('helmet');
+const hpp = require('hpp');
+const redis = require('redis');
+const RedisStore = require('connect-redis').default;
+
+// 라우터
+const indexRouter = require('./routes');
+const userRouter = require('./routes/user');
+const boardRouter = require('./routes/board');
 
 // .env 파일에 있는 내용을 process.env로 설정
 dotenv.config();
+
+// redis 서버 연결
+const redisClient = redis.createClient({
+  url: `redis://${process.env.REDIS_HOST}:${process.env.REDIS_PORT}`,
+  password: process.env.REDIS_PASSWORD,
+  legacyMode: true
+});
+redisClient.connect().catch(console.error);
+const sessionOptions = {
+  resave: false,
+  saveUninitialized: false,
+  secret: process.env.COOKIE_SECRET,
+  cookie: {
+    httpOnly: true,
+    secure: false,
+    maxAge: 1000 * 60 * 60 // 1시간
+  },
+  store: new RedisStore({ client: redisClient })
+};
+
 const app = express();
 // 서버가 실행퇼 포트를 할당하는 부분
 // > process.env.ROOT에 값이 있으면 그걸 사용하고 없으면 3000번 포트를 사용)
 app.set('port', process.env.PORT || 3000);
+
+// html파일을 렌더링할 때 ejs를 사용하기 위한 설정
+// 설정해야 라우터에서 res.render 메서드를 사용할 수 있음
+app.set('views', __dirname + '/views');
+app.set('view engine', 'ejs');
+app.engine('html', require('ejs').renderFile);
 
 /**
  * 미들웨어
@@ -26,13 +62,18 @@ app.set('port', process.env.PORT || 3000);
  *  > dev(개발환경), combined(운영환경), common, short, tiny 등의 옵션이 존재
  *  > 미들웨어안에 미들웨어를 넣음으로써 조건에 따라 다른 미들웨어를 적용할 수 있음
 */
-app.use((req, res, next) => {
-  if (process.env.NODE_ENV === 'production') {
-    morgan('combined')(req, res, next);
-  } else {
-    morgan('dev')(req, res, next);
-  }
-});
+if (process.env.NODE_ENV === 'production') {
+  app.use(morgan('combined'));
+  app.use(
+    helmet({
+      contentSecurityPolicy: false,
+      crossOriginIsolated: false
+    })
+  );
+  app.use(hpp())
+} else {
+  app.use(morgan('dev'));
+}
 
 /**
  * static
@@ -87,6 +128,12 @@ app.use(session({
   name: 'session-cookie',   // 세션 쿠키 이름 설정(기본은 connect.sid)
 }));
 
+// 라우터 연결시 주소체계
+// > app.use(주소, 라우터) : 주소가 공통인 라우터들을 연결
+// > app.use의 주소와 라우터에 있는 주소를 합쳐서 최종 주소가 됨
+app.use('/', indexRouter);
+app.use('/user', userRouter);
+app.use('/board', boardRouter);
 
 app.use((req, res, next) => {
   console.log('모든 요청에 다 실행됩니다.');
@@ -129,7 +176,10 @@ app.get('/', (req, res, next) => {
   // 문자열을 리턴할 때는 send
   // res.send('Hello, Express');
   // html로 응답하고 싶으면 send 대신 sendFile 메서드를 사용
-  res.sendFile(path.join(__dirname, '/views/index.html'));
+
+  // 동일한 주소에서 res.send나 res.sendFile 메서드는 한 번만 사용해야 함
+  // index router에서 이미 res.send를 사용했기 때문에 에러 발생
+  // res.sendFile(path.join(__dirname, '/views/index.html'));
   // throw new Error('에러는 에러 처리 미들웨어로 갑니다.');
   console.log(res.locals.data);
 });
@@ -174,6 +224,16 @@ app.post('/upload', upload.array('images'), (req, res) => {
   console.log(req.files);   // 이미지 정보
   console.log(req.body);    // 나머지 필드 정보
   res.send('ok');
+});
+
+// 일치하는 라우터가 없을 때 404 상태로 응답하는 역할을 하는 미들웨어
+app.use((req, res, next) => {
+  const error = new Error(`${req.method} ${req.url} 라우터가 없습니다.`);
+  error.status = 404;
+  logger.info('hello')
+  logger.error(error.message)
+  next(error);
+  // res.status(404).send('404 Not Found');
 });
 
 // 에러 처리 미들웨어(매개변수가 반드시 4개여야 함)
